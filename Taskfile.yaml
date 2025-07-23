@@ -1,17 +1,9 @@
 version: 3
 silent: false
-output: prefixed
-vars:
-  OS: [ linux, darwin ]
-  ARCH: [ amd64, arm64 ]
-  GO_VERSION: 1.24.3
-  LDFLAGS: "-w -s"
 tasks:
   clean:
     cmds:
-      - "rm -rf bin"
       - "rm -f unit-test-report.md"
-      - "mkdir -p bin"
       - "go clean -cache -testcache"
 
   vendor:
@@ -25,6 +17,10 @@ tasks:
   lint:check:
     cmds:
       - "R=$(go fmt ./...) && if [[ -n \"$R\" ]]; then echo \"The following files require formatting:\"; echo \"$R\"; exit 1; fi"
+
+  build:
+    cmds:
+      - "go build -v ./..."
 
   test:
     cmds:
@@ -41,24 +37,6 @@ tasks:
       - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
       - "go test -race -cover -json . -coverprofile=./cover.out -covermode=atomic -coverpkg=./..."
       - "go-test-coverage --config=./.testcoverage.yml"
-
-  run:
-    deps:
-      - "run:logx"
-
-  run:logx:
-    deps:
-      - "build"
-    cmds:
-      - "bin/logx-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
-
-  run:logx:skipdl:
-    deps:
-      - "build"
-    env:
-      CHEETAH_LOG_LEVEL: "Debug"
-    cmds:
-      - "bin/logx-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
 
   install:go:
     deps:

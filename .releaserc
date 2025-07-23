@@ -24,20 +24,6 @@
       "release": "minor"
     }
   ],
-  "verifyRelease": [
-    [
-      "@semantic-release/exec",
-      {
-        "cmd": "echo ${nextRelease.version} > internal/version/VERSION"
-      }
-    ],
-    [
-      "@semantic-release/exec",
-      {
-        "cmd": "task hash"
-      }
-    ]
-  ],
   "prepare": [
     [
       "@semantic-release/exec",
