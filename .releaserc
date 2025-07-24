@@ -7,30 +7,13 @@
         "preset": "conventionalcommits"
       }
     ],
-    [
-      "@semantic-release/github",
-      {
-        "assets": [
-          {
-            "path": "bin/*"
-          }
-        ]
-      }
-    ]
+    "@semantic-release/github"
   ],
   "releaseRules": [
     {
       "breaking": true,
       "release": "minor"
     }
-  ],
-  "prepare": [
-    [
-      "@semantic-release/exec",
-      {
-        "cmd": "task sign"
-      }
-    ]
   ],
   "branches": [
     {
