@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/rs/zerolog v1.34.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
