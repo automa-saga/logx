@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -13,9 +13,12 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var logx atomic.Pointer[zerolog.Logger]
-var startTime time.Time
-var pid = os.Getpid()
+var (
+	logger    zerolog.Logger
+	loggerMux sync.RWMutex // protects logger reads and writes
+	startTime time.Time
+	pid       = os.Getpid()
+)
 
 // LoggingConfig holds the configuration for logging.
 type LoggingConfig struct {
@@ -74,24 +77,33 @@ func Initialize(cfg LoggingConfig) error {
 	}
 
 	mw := zerolog.MultiLevelWriter(writers...)
-	logger := zerolog.New(mw).With().
+	l2 := zerolog.New(mw).With().
 		Timestamp().
 		Int("pid", pid).
 		Logger()
-	SetLogger(logger)
+	SetLogger(l2)
 
 	return nil
 }
 
+// As returns a pointer to a shallow copy of the global logger.
+// The copy shares the underlying writer so logs go to the same destination.
+// Safe to call concurrently from multiple goroutines.
 func As() *zerolog.Logger {
-	return logx.Load()
+	loggerMux.RLock()
+	loggerCopy := logger
+	loggerMux.RUnlock()
+
+	return &loggerCopy
 }
 
-// SetLogger replaces the global logger atomically. Use this instead of
-// dereferencing As() when you need to swap the logger at runtime (e.g., to
-// suppress console output for a TUI).
+// SetLogger replaces the global logger. Use this instead of dereferencing As()
+// when you need to swap the logger at runtime (e.g., to suppress console
+// output for a TUI). Safe to call concurrently.
 func SetLogger(l zerolog.Logger) {
-	logx.Store(&l)
+	loggerMux.Lock()
+	logger = l
+	loggerMux.Unlock()
 }
 
 func StartTimer() {
