@@ -60,7 +60,11 @@ func TestSetLogger(t *testing.T) {
 	var buf bytes.Buffer
 	custom := zerolog.New(&buf).With().Str("custom", "true").Logger()
 
+	prev := As()
 	SetLogger(custom)
+	t.Cleanup(func() {
+		SetLogger(prev)
+	})
 
 	As().Info().Msg("hello")
 	assert.Contains(t, buf.String(), "hello")
