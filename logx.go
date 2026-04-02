@@ -1,17 +1,19 @@
 package logx
 
 import (
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/pkgerrors"
-	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"log"
 	"os"
 	"path"
+	"sync/atomic"
 	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/pkgerrors"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var logx zerolog.Logger
+var logx atomic.Pointer[zerolog.Logger]
 var startTime time.Time
 var pid = os.Getpid()
 
@@ -72,16 +74,24 @@ func Initialize(cfg LoggingConfig) error {
 	}
 
 	mw := zerolog.MultiLevelWriter(writers...)
-	logx = zerolog.New(mw).With().
+	logger := zerolog.New(mw).With().
 		Timestamp().
 		Int("pid", pid).
 		Logger()
+	SetLogger(logger)
 
 	return nil
 }
 
 func As() *zerolog.Logger {
-	return &logx
+	return logx.Load()
+}
+
+// SetLogger replaces the global logger atomically. Use this instead of
+// dereferencing As() when you need to swap the logger at runtime (e.g., to
+// suppress console output for a TUI).
+func SetLogger(l zerolog.Logger) {
+	logx.Store(&l)
 }
 
 func StartTimer() {

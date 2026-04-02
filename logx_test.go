@@ -1,6 +1,8 @@
 package logx
 
 import (
+	"bytes"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"path/filepath"
@@ -52,4 +54,19 @@ func TestExecutionTime(t *testing.T) {
 func TestGetPid(t *testing.T) {
 	pid := GetPid()
 	assert.Equal(t, os.Getpid(), pid)
+}
+
+func TestSetLogger(t *testing.T) {
+	var buf bytes.Buffer
+	custom := zerolog.New(&buf).With().Str("custom", "true").Logger()
+
+	prev := *As()
+	SetLogger(custom)
+	t.Cleanup(func() {
+		SetLogger(prev)
+	})
+
+	As().Info().Msg("hello")
+	assert.Contains(t, buf.String(), "hello")
+	assert.Contains(t, buf.String(), `"custom":"true"`)
 }
