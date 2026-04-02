@@ -151,6 +151,15 @@ func As() *zerolog.Logger {
 	return &loggerCopy // Return pointer to the copy, not to the shared global
 }
 
+// SetLogger replaces the global logger with a custom-built zerolog.Logger.
+// Use this when you need to swap the logger at runtime (e.g., to suppress
+// console output for a TUI or attach custom hooks). Safe to call concurrently.
+func SetLogger(l zerolog.Logger) {
+	loggerMux.Lock()
+	logger = l
+	loggerMux.Unlock()
+}
+
 func StartTimer() {
 	startTime = time.Now()
 }
