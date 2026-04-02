@@ -154,10 +154,17 @@ func As() *zerolog.Logger {
 // SetLogger replaces the global logger with a custom-built zerolog.Logger.
 // Use this when you need to swap the logger at runtime (e.g., to suppress
 // console output for a TUI or attach custom hooks). Safe to call concurrently.
+//
+// Note: This only swaps the logger instance. It does not update process-wide
+// zerolog settings (zerolog.SetGlobalLevel, ErrorStackMarshaler) — use
+// Initialize for that. Loggers previously obtained via As() are shallow copies
+// and will continue writing to the old destination; callers should re-fetch
+// via As() after SetLogger to use the new logger.
 func SetLogger(l zerolog.Logger) {
 	loggerMux.Lock()
+	defer loggerMux.Unlock()
+
 	logger = l
-	loggerMux.Unlock()
 }
 
 func StartTimer() {
