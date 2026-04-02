@@ -84,6 +84,13 @@ func As() *zerolog.Logger {
 	return &logx
 }
 
+// SetLogger replaces the global logger. Use this instead of dereferencing As()
+// when you need to swap the logger at runtime (e.g., to suppress console
+// output for a TUI).
+func SetLogger(l zerolog.Logger) {
+	logx = l
+}
+
 func StartTimer() {
 	startTime = time.Now()
 }
