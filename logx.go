@@ -136,9 +136,12 @@ func initializeLogger(cfg *LoggingConfig) error {
 //   - Copy is heap-allocated when pointer escapes
 //
 // Performance:
-//   - Each call: ~10ns CPU + ~100 bytes allocation
+//   - Each call: ~30ns CPU + 112 bytes / 1 allocation (Apple M1 Max)
 //   - Negligible compared to actual log I/O (~1-10ms)
 //   - Only significant in loops with >1000 iterations
+//   - Measured by BenchmarkAs* in logx_test.go; hoisting As() out of a
+//     hot loop drops the per-iteration cost to 0 B / 0 allocs. See the
+//     Performance section in README.md for the full benchmark table.
 //
 // Returns:
 //   - A pointer to an independent copy of the logger
