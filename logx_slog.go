@@ -63,9 +63,17 @@ func (h *slogHandler) zl() *zerolog.Logger {
 }
 
 // Enabled reports whether records at the given level would be emitted, gating on
-// zerolog's global level.
+// both zerolog's global level and the target logger's own minimum level so it
+// matches what Handle will actually emit (preserving slog's Enabled fast path).
 func (h *slogHandler) Enabled(_ context.Context, l slog.Level) bool {
-	return zerologLevel(l) >= zerolog.GlobalLevel()
+	lvl := zerologLevel(l)
+	if lvl < zerolog.GlobalLevel() {
+		return false
+	}
+	if zl := h.zl(); zl != nil && lvl < zl.GetLevel() {
+		return false
+	}
+	return true
 }
 
 // Handle maps the slog.Record onto a zerolog event: level, preformatted attrs
@@ -155,6 +163,12 @@ func appendAttr(e *zerolog.Event, prefix string, a slog.Attr) {
 		for _, ga := range attrs {
 			appendAttr(e, p, ga)
 		}
+		return
+	}
+
+	// Per the slog contract, ignore a non-group attr with an empty key (an
+	// empty-keyed group is inlined above, not dropped).
+	if a.Key == "" {
 		return
 	}
 
