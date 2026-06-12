@@ -23,9 +23,13 @@ import (
 //
 //	slog.SetDefault(slog.New(logx.NewSlogHandler()))
 //
-// The handler reads As() on every call, so it always reflects the current logx
-// configuration even if Initialize or SetLogger is invoked after the handler is
-// created. Use NewSlogHandlerFrom to pin a specific *zerolog.Logger instead.
+// The handler resolves As() on each Handle/Enabled call, so it always reflects
+// the current logx configuration even if Initialize or SetLogger is invoked
+// after the handler is created. This is the recommended choice for routing
+// slog.Default() through logx: resolving As() per record costs no extra
+// allocations (the copy does not escape Handle), so there is no performance
+// reason to pin. Use NewSlogHandlerFrom only when you want to route records to a
+// specific *zerolog.Logger instead.
 func NewSlogHandler() slog.Handler {
 	return &slogHandler{}
 }
@@ -33,6 +37,17 @@ func NewSlogHandler() slog.Handler {
 // NewSlogHandlerFrom returns a slog.Handler that forwards records to the given
 // zerolog logger rather than the package-global one. Pass nil to fall back to
 // As() (equivalent to NewSlogHandler).
+//
+// Use this when you want slog records to go to a specific logger — for example a
+// sub-logger carrying extra context or a separate sink:
+//
+//	reqLogger := logx.As().With().Str("component", "http").Logger()
+//	slog.SetDefault(slog.New(logx.NewSlogHandlerFrom(&reqLogger)))
+//
+// Note: the pinned logger is a snapshot. As() returns a shallow copy that shares
+// the underlying writer by pointer, so a handler built from one keeps writing to
+// that destination and will NOT pick up a later Initialize or SetLogger. When you
+// want the handler to follow logx reconfiguration, use NewSlogHandler instead.
 func NewSlogHandlerFrom(l *zerolog.Logger) slog.Handler {
 	return &slogHandler{logger: l}
 }
