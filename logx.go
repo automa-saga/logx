@@ -154,6 +154,15 @@ func As() *zerolog.Logger {
 	return &loggerCopy // Return pointer to the copy, not to the shared global
 }
 
+// loggerLevel returns the global logger's minimum level without allocating a
+// copy. It lets hot-path checks (such as slog's Enabled fast path) read the
+// configured level under the read lock without paying the As() copy.
+func loggerLevel() zerolog.Level {
+	loggerMux.RLock()
+	defer loggerMux.RUnlock()
+	return logger.GetLevel()
+}
+
 // SetLogger replaces the global logger with a custom-built zerolog.Logger.
 // Use this when you need to swap the logger at runtime (e.g., to suppress
 // console output for a TUI or attach custom hooks). Safe to call concurrently.

@@ -85,10 +85,14 @@ func (h *slogHandler) Enabled(_ context.Context, l slog.Level) bool {
 	if lvl < zerolog.GlobalLevel() {
 		return false
 	}
-	if zl := h.zl(); zl != nil && lvl < zl.GetLevel() {
-		return false
+	// Read the target logger's minimum level without allocating: for a pinned
+	// logger read it directly, otherwise read the global logger's level under
+	// the lock rather than taking an As() copy. This keeps the Enabled fast
+	// path allocation-free for suppressed records.
+	if h.logger != nil {
+		return lvl >= h.logger.GetLevel()
 	}
-	return true
+	return lvl >= loggerLevel()
 }
 
 // Handle maps the slog.Record onto a zerolog event: level, preformatted attrs
@@ -155,7 +159,8 @@ func zerologLevel(l slog.Level) zerolog.Level {
 
 // appendAttr writes a single slog.Attr onto the zerolog event, applying prefix
 // to the key. Groups recurse with an extended prefix; an error value is emitted
-// via AnErr so it benefits from zerolog's error stack marshaling.
+// via AnErr, which records the error's message (it does not add a stack trace —
+// that requires an explicit Stack() call on the event).
 func appendAttr(e *zerolog.Event, prefix string, a slog.Attr) {
 	a.Value = a.Value.Resolve()
 

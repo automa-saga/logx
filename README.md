@@ -78,10 +78,10 @@ Benchmarks (Apple M1 Max, `go test -bench BenchmarkAs -benchmem`):
 
 | Benchmark                          | ns/op | B/op | allocs/op | Notes                              |
 |------------------------------------|-------|------|-----------|------------------------------------|
-| `As_PerIteration`                  | 34.6  | 112  | 1         | `As()` per loop, event disabled    |
-| `As_StoredOnce`                    | 3.2   | 0    | 0         | `As()` hoisted, event disabled     |
-| `As_Enabled_PerIteration`          | 101.6 | 112  | 1         | `As()` per loop, event emitted     |
-| `As_Enabled_StoredOnce`            | 69.0  | 0    | 0         | `As()` hoisted, event emitted      |
+| `BenchmarkAs_PerIteration`         | 34.6  | 112  | 1         | `As()` per loop, event disabled    |
+| `BenchmarkAs_StoredOnce`           | 3.2   | 0    | 0         | `As()` hoisted, event disabled     |
+| `BenchmarkAs_Enabled_PerIteration` | 101.6 | 112  | 1         | `As()` per loop, event emitted     |
+| `BenchmarkAs_Enabled_StoredOnce`   | 69.0  | 0    | 0         | `As()` hoisted, event emitted      |
 
 **"Enabled" vs "disabled"** refers to whether the log level lets the event
 actually be written. A call like `logger.Info()` only encodes fields and writes
