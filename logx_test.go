@@ -2,6 +2,7 @@ package logx
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -119,6 +120,76 @@ func BenchmarkAs_WithLogging(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		As().Info().Msg("benchmark message")
+	}
+}
+
+// BenchmarkAs_PerIteration measures the cost of calling As() inside a hot loop.
+// This models the "Standard Usage" pattern from the As() docs and is expected
+// to allocate one logger copy (~100 bytes) per iteration.
+func BenchmarkAs_PerIteration(b *testing.B) {
+	err := Initialize(LoggingConfig{
+		Level:          "info",
+		ConsoleLogging: false,
+	})
+	if err != nil {
+		b.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Call As() on every iteration (the pattern to avoid in hot paths).
+		As().Debug().Int("i", i).Msg("processing")
+	}
+}
+
+// BenchmarkAs_StoredOnce measures the cost when the logger is stored once
+// before the loop. This models the "High-Frequency Logging" pattern from the
+// As() docs and is expected to allocate 0 bytes per iteration.
+func BenchmarkAs_StoredOnce(b *testing.B) {
+	err := Initialize(LoggingConfig{
+		Level:          "info",
+		ConsoleLogging: false,
+	})
+	if err != nil {
+		b.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	logger := As() // Allocate once, outside the hot loop.
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		logger.Debug().Int("i", i).Msg("processing")
+	}
+}
+
+// BenchmarkAs_Enabled_PerIteration measures the per-iteration pattern when the
+// log event is actually emitted (level enabled), so the cost includes both the
+// As() copy and zerolog's event encoding/write. Output goes to io.Discard to
+// exclude real I/O while still exercising the encoder.
+func BenchmarkAs_Enabled_PerIteration(b *testing.B) {
+	SetLogger(zerolog.New(io.Discard).Level(zerolog.InfoLevel))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		As().Info().Int("i", i).Msg("processing")
+	}
+}
+
+// BenchmarkAs_Enabled_StoredOnce measures the stored-once pattern with the log
+// event emitted. The difference versus BenchmarkAs_Enabled_PerIteration isolates
+// the cost saved by hoisting As() out of the loop.
+func BenchmarkAs_Enabled_StoredOnce(b *testing.B) {
+	SetLogger(zerolog.New(io.Discard).Level(zerolog.InfoLevel))
+
+	logger := As() // Allocate once, outside the hot loop.
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		logger.Info().Int("i", i).Msg("processing")
 	}
 }
 

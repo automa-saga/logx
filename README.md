@@ -60,6 +60,47 @@ func main() {
 
 ```
 
+## Performance
+
+`logx.As()` returns a pointer to a shallow copy of the global logger (~112 bytes,
+one heap allocation). For most code this is negligible. In tight loops or
+high-frequency hot paths (> 1000 calls/sec), store the logger once before the
+loop to avoid the per-iteration copy.
+
+```go
+logger := logx.As()              // allocate once
+for _, r := range records {
+    logger.Debug().Str("id", r.ID).Msg("processing")  // 0 allocs per iteration
+}
+```
+
+Benchmarks (Apple M1 Max, `go test -bench BenchmarkAs -benchmem`):
+
+| Benchmark                          | ns/op | B/op | allocs/op | Notes                              |
+|------------------------------------|-------|------|-----------|------------------------------------|
+| `BenchmarkAs_PerIteration`         | 34.6  | 112  | 1         | `As()` per loop, event disabled    |
+| `BenchmarkAs_StoredOnce`           | 3.2   | 0    | 0         | `As()` hoisted, event disabled     |
+| `BenchmarkAs_Enabled_PerIteration` | 101.6 | 112  | 1         | `As()` per loop, event emitted     |
+| `BenchmarkAs_Enabled_StoredOnce`   | 69.0  | 0    | 0         | `As()` hoisted, event emitted      |
+
+**"Enabled" vs "disabled"** refers to whether the log level lets the event
+actually be written. A call like `logger.Info()` only encodes fields and writes
+output when the logger's configured level permits that severity; otherwise
+zerolog short-circuits and does almost nothing.
+
+- The **disabled** rows (`As_PerIteration`, `As_StoredOnce`) call a level below
+  the threshold, so the event is a no-op. These isolate the cost of `As()`
+  itself — the shallow copy and its heap allocation.
+- The **enabled** rows (`As_Enabled_*`) emit the event (written to `io.Discard`
+  to exclude disk I/O), so they include the full real-world cost: the `As()`
+  copy plus field encoding and writing.
+
+Either way, hoisting `As()` out of the loop removes the 112 B / 1 alloc per
+iteration.
+
+Hoisting `As()` out of the loop eliminates the 112 B / 1 alloc per iteration in
+both cases. Reproduce with `go test -bench BenchmarkAs -benchmem .`.
+
 ## License
 
 MIT License. See the `LICENSE` file for details.
