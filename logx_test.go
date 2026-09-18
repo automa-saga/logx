@@ -37,6 +37,32 @@ func TestInitialize_FileLogging(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestInitialize_TimeFormat(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := "test.log"
+
+	err := Initialize(LoggingConfig{
+		Level:       "info",
+		FileLogging: true,
+		Directory:   tempDir,
+		Filename:    logFile,
+		MaxSize:     1,
+		MaxBackups:  1,
+		MaxAge:      1,
+		TimeFormat:  "2006-01-02T15:04:05.000Z07:00",
+	})
+	assert.NoError(t, err)
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	As().Info().Msg("Test info message")
+
+	content, err := os.ReadFile(filepath.Join(tempDir, logFile))
+	assert.NoError(t, err)
+	assert.Regexp(t, `"time":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}`, string(content))
+}
+
 func TestInitialize_InvalidLogLevel(t *testing.T) {
 	err := Initialize(LoggingConfig{
 		Level:          "invalid",

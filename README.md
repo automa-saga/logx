@@ -40,6 +40,7 @@ func main() {
 		MaxBackups:     10,
 		MaxAge:         30,
 		Compress:       true,
+		TimeFormat:     "2006-01-02T15:04:05.000Z07:00", // millisecond precision; defaults to time.RFC3339
 	})
 
 	if err != nil {
@@ -53,10 +54,10 @@ func main() {
 }
 
 # Output
-2025-06-27T13:08:40+10:00 INF Application started pid=35333
-2025-06-27T13:08:40+10:00 DBG Debugging details pid=35333 userID=123
-2025-06-27T13:08:40+10:00 WRN This is a warning pid=35333
-2025-06-27T13:08:40+10:00 ERR An error occurred error="test error" pid=35333
+2025-06-27T13:08:40.123+10:00 INF Application started pid=35333
+2025-06-27T13:08:40.124+10:00 DBG Debugging details pid=35333 userID=123
+2025-06-27T13:08:40.124+10:00 WRN This is a warning pid=35333
+2025-06-27T13:08:40.125+10:00 ERR An error occurred error="test error" pid=35333
 
 ```
 

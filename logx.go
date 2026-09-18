@@ -39,6 +39,8 @@ type LoggingConfig struct {
 	MaxAge int
 	// Compress enables compression of rolled log files.
 	Compress bool
+	// TimeFormat is the timestamp layout for console and file output. Defaults to time.RFC3339.
+	TimeFormat string
 }
 
 func init() {
@@ -64,9 +66,15 @@ func initializeLogger(cfg *LoggingConfig) error {
 	zerolog.SetGlobalLevel(l)
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
+	timeFormat := cfg.TimeFormat
+	if timeFormat == "" {
+		timeFormat = time.RFC3339
+	}
+	zerolog.TimeFieldFormat = timeFormat
+
 	console := zerolog.ConsoleWriter{
 		Out:        os.Stdout,
-		TimeFormat: time.RFC3339,
+		TimeFormat: timeFormat,
 	}
 
 	var writers []io.Writer
