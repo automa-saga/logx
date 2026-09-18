@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,7 @@ func TestInitialize_FileLogging(t *testing.T) {
 func TestInitialize_TimeFormat(t *testing.T) {
 	tempDir := t.TempDir()
 	logFile := "test.log"
+	const layout = "2006-01-02T15:04:05.000Z07:00"
 
 	err := Initialize(LoggingConfig{
 		Level:       "info",
@@ -49,7 +51,7 @@ func TestInitialize_TimeFormat(t *testing.T) {
 		MaxSize:     1,
 		MaxBackups:  1,
 		MaxAge:      1,
-		TimeFormat:  "2006-01-02T15:04:05.000Z07:00",
+		TimeFormat:  layout,
 	})
 	assert.NoError(t, err)
 	t.Cleanup(func() {
@@ -60,7 +62,10 @@ func TestInitialize_TimeFormat(t *testing.T) {
 
 	content, err := os.ReadFile(filepath.Join(tempDir, logFile))
 	assert.NoError(t, err)
-	assert.Regexp(t, `"time":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}`, string(content))
+
+	m := decode(t, bytes.NewBuffer(content))
+	_, err = time.Parse(layout, m["time"].(string))
+	assert.NoError(t, err)
 }
 
 func TestInitialize_InvalidLogLevel(t *testing.T) {
