@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,36 @@ func TestInitialize_FileLogging(t *testing.T) {
 	// Verify log file exists
 	logFilePath := filepath.Join(tempDir, logFile)
 	_, err = os.Stat(logFilePath)
+	assert.NoError(t, err)
+}
+
+func TestInitialize_TimeFormat(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := "test.log"
+	const layout = "2006-01-02T15:04:05.000Z07:00"
+
+	err := Initialize(LoggingConfig{
+		Level:       "info",
+		FileLogging: true,
+		Directory:   tempDir,
+		Filename:    logFile,
+		MaxSize:     1,
+		MaxBackups:  1,
+		MaxAge:      1,
+		TimeFormat:  layout,
+	})
+	assert.NoError(t, err)
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	As().Info().Msg("Test info message")
+
+	content, err := os.ReadFile(filepath.Join(tempDir, logFile))
+	assert.NoError(t, err)
+
+	m := decode(t, bytes.NewBuffer(content))
+	_, err = time.Parse(layout, m["time"].(string))
 	assert.NoError(t, err)
 }
 
