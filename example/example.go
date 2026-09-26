@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/automa-saga/logx"
+	"github.com/rs/zerolog"
 )
 
 func main() {
@@ -16,10 +18,17 @@ func main() {
 		MaxBackups:     10,
 		MaxAge:         30,
 		Compress:       true,
+		UTC:            true, // pin timestamps to UTC
+		IncludeCaller:  true, // annotate lines with source location
 	})
 	if err != nil {
 		panic(err)
 	}
+
+	// Stamp persistent fields onto every line (As() and the slog bridge).
+	logx.SetGlobalContext(func(c zerolog.Context) zerolog.Context {
+		return c.Str("build_commit", "abc123")
+	})
 
 	logx.As().Info().Msg("Application started")
 	logx.As().Debug().Str("userID", "123").Msg("Debugging details")

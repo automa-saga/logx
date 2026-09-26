@@ -23,6 +23,20 @@ var (
 	loggerMux sync.RWMutex // protects logger re-initialization
 	startTime time.Time
 	pid       = os.Getpid()
+
+	// slogLogger mirrors logger but never carries the caller hook. The slog
+	// bridge (NewSlogHandler) uses it and derives the caller from the record's
+	// PC instead, because the shared hook would resolve every slog line to the
+	// handler's own Msg call site rather than the real caller.
+	slogLogger zerolog.Logger
+	// baseWriter is retained so both loggers can be rebuilt when the global
+	// context fields change (SetGlobalContext).
+	baseWriter io.Writer
+	// globalCtx applies persistent fields to both loggers (e.g. build metadata).
+	globalCtx func(zerolog.Context) zerolog.Context
+	// includeCaller records whether IncludeCaller was set, so the slog bridge
+	// knows to attach a PC-derived caller.
+	includeCaller bool
 )
 
 // LoggingConfig holds the configuration for logging.
@@ -128,16 +142,57 @@ func initializeLogger(cfg *LoggingConfig) error {
 		writers = append(writers, consoleSink)
 	}
 
-	mw := zerolog.MultiLevelWriter(writers...)
-	ctx := zerolog.New(mw).With().
-		Timestamp().
-		Int("pid", pid)
-	if cfg.IncludeCaller {
-		ctx = ctx.Caller()
-	}
-	logger = ctx.Logger()
+	baseWriter = zerolog.MultiLevelWriter(writers...)
+	includeCaller = cfg.IncludeCaller
+	rebuildLoggersLocked()
 
 	return nil
+}
+
+// rebuildLoggersLocked (re)builds both the direct logger and the slog logger
+// from baseWriter, applying globalCtx to each. The direct logger carries the
+// caller hook when includeCaller is set; the slog logger never does (the slog
+// bridge sets caller from the record PC). Callers must hold loggerMux.
+func rebuildLoggersLocked() {
+	base := zerolog.New(baseWriter).With().
+		Timestamp().
+		Int("pid", pid)
+	if globalCtx != nil {
+		base = globalCtx(base)
+	}
+	slogLogger = base.Logger()
+	direct := base
+	if includeCaller {
+		direct = base.Caller()
+	}
+	logger = direct.Logger()
+}
+
+// SetGlobalContext registers fields applied to every log line on BOTH the direct
+// logger (As()) and the slog bridge (NewSlogHandler). Prefer this over building a
+// logger with SetLogger(As().With()...) when adding persistent fields such as
+// build metadata: fields added that way only reach As() callers, not logs routed
+// through the slog handler. Pass nil to clear. Safe to call concurrently.
+func SetGlobalContext(apply func(zerolog.Context) zerolog.Context) {
+	loggerMux.Lock()
+	defer loggerMux.Unlock()
+	globalCtx = apply
+	rebuildLoggersLocked()
+}
+
+// callerEnabled reports whether IncludeCaller is active, under the read lock.
+func callerEnabled() bool {
+	loggerMux.RLock()
+	defer loggerMux.RUnlock()
+	return includeCaller
+}
+
+// slogBase returns a copy of the caller-hook-free slog logger.
+func slogBase() *zerolog.Logger {
+	loggerMux.RLock()
+	c := slogLogger
+	loggerMux.RUnlock()
+	return &c
 }
 
 // shortCaller renders a caller as the last few path segments plus the line
@@ -233,15 +288,23 @@ func loggerLevel() zerolog.Level {
 	return logger.GetLevel()
 }
 
-// SetLogger replaces the global logger with a custom-built zerolog.Logger.
-// Use this when you need to swap the logger at runtime (e.g., to suppress
+// SetLogger replaces the As() logger with a custom-built zerolog.Logger.
+// Use this when you need to swap the direct logger at runtime (e.g., to suppress
 // console output for a TUI or attach custom hooks). Safe to call concurrently.
 //
-// Note: This only swaps the logger instance. It does not update process-wide
-// zerolog settings (zerolog.SetGlobalLevel, ErrorStackMarshaler) — use
-// Initialize for that. Loggers previously obtained via As() are shallow copies
-// and will continue writing to the old destination; callers should re-fetch
-// via As() after SetLogger to use the new logger.
+// Note: This swaps only the As() logger instance. It does NOT:
+//   - update process-wide zerolog settings (zerolog.SetGlobalLevel,
+//     ErrorStackMarshaler) — use Initialize for that;
+//   - affect the slog bridge (NewSlogHandler), which uses a separate
+//     caller-hook-free logger.
+//
+// To add persistent fields (e.g. build metadata) to every line across BOTH the
+// As() logger and the slog bridge, prefer SetGlobalContext — building a logger
+// with SetLogger(As().With()...) welds the fields (and the caller hook) onto one
+// instance that the slog bridge cannot share and that Initialize would discard.
+//
+// Loggers previously obtained via As() are shallow copies and will continue
+// writing to the old destination; re-fetch via As() after SetLogger.
 func SetLogger(l zerolog.Logger) {
 	loggerMux.Lock()
 	defer loggerMux.Unlock()

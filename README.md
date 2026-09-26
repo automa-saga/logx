@@ -1,6 +1,6 @@
 # logx
 
-`logx` is a pluggable logging library for Go that integrates [zerolog](https://github.com/rs/zerolog) for high-performance structured logging and [lumberjack](https://github.com/bdurand/lumberjack) for log file rotation.
+`logx` is a pluggable logging library for Go that integrates [zerolog](https://github.com/rs/zerolog) for high-performance structured logging and [lumberjack](https://github.com/natefinch/lumberjack) for log file rotation.
 
 This library is designed for easy integration into any Go application that wants the power of zerolog with seamless log rotation support from lumberjack. It helps with the usecase where a global logger is needed across different packages or modules, while still allowing for flexible centralized configuration and output formats.
 
@@ -12,6 +12,10 @@ By default, it includes process ID (e.g. pid) in the logs, which can be useful f
 - Log levels: All levels that zerolog supports (i.e. Debug, Info, Warn, Error, Fatal, Panic, Trace)
 - Log file rotation via lumberjack
 - Includes process ID in logs for easier debugging
+- Optional UTC timestamps and truncated source caller (`IncludeCaller`)
+- Console (human-readable) or structured JSON output (`ConsoleLogging`)
+- Persistent global fields via `SetGlobalContext`
+- Bridges the standard library `log/slog` (and `go-logr`) into the same output
 
 ## Installation
 
@@ -62,6 +66,38 @@ func main() {
 2025-06-27T03:08:40.125Z ERR myapp/main.go:55 > An error occurred error="test error" pid=35333
 
 ```
+
+## Global fields
+
+To stamp the same fields (e.g. build metadata) onto **every** log line, register
+them with `SetGlobalContext`. logx re-applies them whenever it (re)builds its
+loggers, and they reach both `As()` and the slog bridge:
+
+```go
+logx.SetGlobalContext(func(c zerolog.Context) zerolog.Context {
+    return c.Str("build_version", version).Str("build_commit", commit)
+})
+```
+
+Prefer this over `logx.SetLogger(logx.As().With()....Logger())`: that snapshots
+one logger instance, is dropped by a later `Initialize`, and is not shared with
+the slog bridge.
+
+## Bridging log/slog and go-logr
+
+`NewSlogHandler` routes `log/slog` (and, via `logr.FromSlogHandler`, `go-logr`
+consumers such as controller-runtime) through logx's sinks, level, and global
+fields:
+
+```go
+slog.SetDefault(slog.New(logx.NewSlogHandler()))
+
+// go-logr (e.g. controller-runtime):
+ctrl.SetLogger(logr.FromSlogHandler(logx.NewSlogHandler()))
+```
+
+With `IncludeCaller` enabled, the handler resolves the caller from the slog
+record's PC (the real call site), not from the logging wrapper.
 
 ## Performance
 
