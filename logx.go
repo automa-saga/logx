@@ -13,6 +13,11 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// defaultCallerMarshalFunc captures zerolog's built-in caller marshaler so it
+// can be restored when IncludeCaller is disabled, avoiding leaking shortCaller
+// into the process-global state (and other zerolog loggers).
+var defaultCallerMarshalFunc = zerolog.CallerMarshalFunc
+
 var (
 	logger    zerolog.Logger
 	loggerMux sync.RWMutex // protects logger re-initialization
@@ -88,6 +93,8 @@ func initializeLogger(cfg *LoggingConfig) error {
 
 	if cfg.IncludeCaller {
 		zerolog.CallerMarshalFunc = shortCaller
+	} else {
+		zerolog.CallerMarshalFunc = defaultCallerMarshalFunc
 	}
 
 	// The console sink honors ConsoleLogging: human-readable when true, raw

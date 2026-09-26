@@ -55,11 +55,11 @@ func main() {
 	logx.As().Error().Err(fmt.Errorf("test error")).Msg("An error occurred")
 }
 
-# Output
-2025-06-27T13:08:40.123+10:00 INF Application started pid=35333
-2025-06-27T13:08:40.124+10:00 DBG Debugging details pid=35333 userID=123
-2025-06-27T13:08:40.124+10:00 WRN This is a warning pid=35333
-2025-06-27T13:08:40.125+10:00 ERR An error occurred error="test error" pid=35333
+# Output (with UTC: true and IncludeCaller: true)
+2025-06-27T03:08:40.123Z INF myapp/main.go:52 > Application started pid=35333
+2025-06-27T03:08:40.124Z DBG myapp/main.go:53 > Debugging details pid=35333 userID=123
+2025-06-27T03:08:40.124Z WRN myapp/main.go:54 > This is a warning pid=35333
+2025-06-27T03:08:40.125Z ERR myapp/main.go:55 > An error occurred error="test error" pid=35333
 
 ```
 

@@ -176,6 +176,32 @@ func TestInitialize_IncludeCaller(t *testing.T) {
 	assert.False(t, filepath.IsAbs(caller), "caller should be truncated, got %q", caller)
 }
 
+// TestInitialize_IncludeCaller_RestoresDefault verifies that disabling
+// IncludeCaller restores zerolog's default CallerMarshalFunc instead of leaking
+// shortCaller into the process-global state.
+func TestInitialize_IncludeCaller_RestoresDefault(t *testing.T) {
+	t.Cleanup(func() {
+		zerolog.CallerMarshalFunc = defaultCallerMarshalFunc
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	// Enable, then disable.
+	require.NoError(t, Initialize(LoggingConfig{Level: "info", IncludeCaller: true}))
+	require.NoError(t, Initialize(LoggingConfig{Level: "info", IncludeCaller: false}))
+
+	// A logger that opts into the caller directly should now use the default
+	// (untruncated, absolute) marshaler rather than shortCaller.
+	var buf bytes.Buffer
+	l := zerolog.New(&buf).With().Caller().Logger()
+	l.Info().Msg("check")
+
+	m := decode(t, &buf)
+	caller, ok := m["caller"].(string)
+	require.True(t, ok, "expected a caller field, got %v", m)
+	assert.True(t, filepath.IsAbs(caller),
+		"default marshaler should emit the absolute path, got %q", caller)
+}
+
 func TestShortCaller(t *testing.T) {
 	cases := []struct {
 		file string
