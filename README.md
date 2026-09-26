@@ -41,6 +41,8 @@ func main() {
 		MaxAge:         30,
 		Compress:       true,
 		TimeFormat:     "2006-01-02T15:04:05.000Z07:00", // millisecond precision; defaults to time.RFC3339
+		UTC:            true,                            // pin timestamps to UTC (default: local time)
+		IncludeCaller:  true,                            // annotate lines with source location, e.g. pkg/sub/file.go:42
 	})
 
 	if err != nil {

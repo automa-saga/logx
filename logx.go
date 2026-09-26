@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,6 +42,11 @@ type LoggingConfig struct {
 	Compress bool
 	// TimeFormat is the timestamp layout for console and file output. Defaults to time.RFC3339.
 	TimeFormat string
+	// UTC pins log timestamps to UTC. When false, timestamps use local time.
+	UTC bool
+	// IncludeCaller annotates each log line with the source file and line
+	// (truncated to the last few path segments, e.g. "pkg/sub/file.go:42").
+	IncludeCaller bool
 }
 
 func init() {
@@ -72,9 +78,34 @@ func initializeLogger(cfg *LoggingConfig) error {
 	}
 	zerolog.TimeFieldFormat = timeFormat
 
-	console := zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: timeFormat,
+	if cfg.UTC {
+		// The closure is required: time.Now().UTC is a method value that binds
+		// the receiver once, freezing every line to the instant this ran.
+		zerolog.TimestampFunc = func() time.Time { return time.Now().UTC() }
+	} else {
+		zerolog.TimestampFunc = time.Now
+	}
+
+	if cfg.IncludeCaller {
+		zerolog.CallerMarshalFunc = shortCaller
+	}
+
+	// The console sink honors ConsoleLogging: human-readable when true, raw
+	// structured JSON when false. The file sink is always JSON.
+	var consoleSink io.Writer
+	if cfg.ConsoleLogging {
+		cw := zerolog.ConsoleWriter{
+			Out:        os.Stdout,
+			TimeFormat: timeFormat,
+		}
+		if cfg.UTC {
+			// Render the parsed timestamp in UTC too; otherwise the console
+			// writer reformats it in local time even when the field is UTC.
+			cw.TimeLocation = time.UTC
+		}
+		consoleSink = cw
+	} else {
+		consoleSink = os.Stdout
 	}
 
 	var writers []io.Writer
@@ -85,18 +116,42 @@ func initializeLogger(cfg *LoggingConfig) error {
 		}
 
 		fileWriter := zerolog.New(logFile).With().Timestamp().Logger()
-		writers = append(writers, console, fileWriter)
+		writers = append(writers, consoleSink, fileWriter)
 	} else {
-		writers = append(writers, console)
+		writers = append(writers, consoleSink)
 	}
 
 	mw := zerolog.MultiLevelWriter(writers...)
-	logger = zerolog.New(mw).With().
+	ctx := zerolog.New(mw).With().
 		Timestamp().
-		Int("pid", pid).
-		Logger()
+		Int("pid", pid)
+	if cfg.IncludeCaller {
+		ctx = ctx.Caller()
+	}
+	logger = ctx.Logger()
 
 	return nil
+}
+
+// shortCaller renders a caller as the last few path segments plus the line
+// number (e.g. "pkg/sub/file.go:42"), so log lines can be traced to source
+// without emitting full absolute paths.
+func shortCaller(_ uintptr, file string, line int) string {
+	const maxSegments = 3
+
+	short := file
+	segments := 0
+	for i := len(file) - 1; i >= 0; i-- {
+		if file[i] == '/' {
+			segments++
+			if segments == maxSegments {
+				short = file[i+1:]
+				break
+			}
+		}
+	}
+
+	return short + ":" + strconv.Itoa(line)
 }
 
 // As returns a pointer to a shallow copy of the global logger.
