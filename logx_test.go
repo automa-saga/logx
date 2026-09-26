@@ -2,6 +2,7 @@ package logx
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInitialize_FileLogging(t *testing.T) {
@@ -66,6 +68,154 @@ func TestInitialize_TimeFormat(t *testing.T) {
 	m := decode(t, bytes.NewBuffer(content))
 	_, err = time.Parse(layout, m["time"].(string))
 	assert.NoError(t, err)
+}
+
+// captureStdout redirects os.Stdout for the duration of fn and returns whatever
+// was written. It restores the original os.Stdout before returning.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	fn()
+
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+func TestInitialize_ConsoleLogging_JSON(t *testing.T) {
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	out := captureStdout(t, func() {
+		err := Initialize(LoggingConfig{Level: "info", ConsoleLogging: false})
+		require.NoError(t, err)
+		As().Info().Msg("structured output")
+	})
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &m),
+		"ConsoleLogging:false should emit structured JSON, got %q", out)
+	assert.Equal(t, "structured output", m["message"])
+	assert.Equal(t, "info", m["level"])
+}
+
+func TestInitialize_ConsoleLogging_Human(t *testing.T) {
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	out := captureStdout(t, func() {
+		err := Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+		require.NoError(t, err)
+		As().Info().Msg("human output")
+	})
+
+	// The console writer emits human-readable output, not parseable JSON.
+	var m map[string]any
+	assert.Error(t, json.Unmarshal([]byte(out), &m),
+		"ConsoleLogging:true should emit human-readable output, got %q", out)
+	assert.Contains(t, out, "human output")
+}
+
+func TestInitialize_UTC(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := "test.log"
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	err := Initialize(LoggingConfig{
+		Level:       "info",
+		FileLogging: true,
+		Directory:   tempDir,
+		Filename:    logFile,
+		UTC:         true,
+	})
+	require.NoError(t, err)
+
+	As().Info().Msg("utc message")
+
+	content, err := os.ReadFile(filepath.Join(tempDir, logFile))
+	require.NoError(t, err)
+
+	m := decode(t, bytes.NewBuffer(content))
+	ts, err := time.Parse(time.RFC3339, m["time"].(string))
+	require.NoError(t, err)
+	_, offset := ts.Zone()
+	assert.Equal(t, 0, offset, "timestamp should be in UTC")
+}
+
+func TestInitialize_IncludeCaller(t *testing.T) {
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	out := captureStdout(t, func() {
+		err := Initialize(LoggingConfig{
+			Level:          "info",
+			ConsoleLogging: false,
+			IncludeCaller:  true,
+		})
+		require.NoError(t, err)
+		As().Info().Msg("caller message")
+	})
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &m))
+	caller, ok := m["caller"].(string)
+	require.True(t, ok, "expected a caller field, got %v", m)
+	assert.Contains(t, caller, "logx_test.go:")
+	assert.False(t, filepath.IsAbs(caller), "caller should be truncated, got %q", caller)
+}
+
+// TestInitialize_IncludeCaller_RestoresDefault verifies that disabling
+// IncludeCaller restores zerolog's default CallerMarshalFunc instead of leaking
+// shortCaller into the process-global state.
+func TestInitialize_IncludeCaller_RestoresDefault(t *testing.T) {
+	t.Cleanup(func() {
+		zerolog.CallerMarshalFunc = defaultCallerMarshalFunc
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	// Enable, then disable.
+	require.NoError(t, Initialize(LoggingConfig{Level: "info", IncludeCaller: true}))
+	require.NoError(t, Initialize(LoggingConfig{Level: "info", IncludeCaller: false}))
+
+	// A logger that opts into the caller directly should now use the default
+	// (untruncated, absolute) marshaler rather than shortCaller.
+	var buf bytes.Buffer
+	l := zerolog.New(&buf).With().Caller().Logger()
+	l.Info().Msg("check")
+
+	m := decode(t, &buf)
+	caller, ok := m["caller"].(string)
+	require.True(t, ok, "expected a caller field, got %v", m)
+	assert.True(t, filepath.IsAbs(caller),
+		"default marshaler should emit the absolute path, got %q", caller)
+}
+
+func TestShortCaller(t *testing.T) {
+	cases := []struct {
+		file string
+		line int
+		want string
+	}{
+		{"/home/user/project/pkg/sub/file.go", 42, "pkg/sub/file.go:42"},
+		{"pkg/sub/file.go", 7, "pkg/sub/file.go:7"},
+		{"file.go", 1, "file.go:1"},
+		{"a/b.go", 3, "a/b.go:3"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, shortCaller(0, c.file, c.line))
+	}
 }
 
 func TestInitialize_InvalidLogLevel(t *testing.T) {
