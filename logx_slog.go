@@ -3,40 +3,43 @@ package logx
 import (
 	"context"
 	"log/slog"
+	"runtime"
 
 	"github.com/rs/zerolog"
 )
 
-// NewSlogHandler returns a slog.Handler that forwards every record to the
-// package-global zerolog logger (the same one returned by As()). It lets code
-// that logs through the standard library's log/slog API share logx's configured
-// output — console writer, rolling file, level, pid field, and any logger set
-// via SetLogger/Initialize.
+// NewSlogHandler returns a slog.Handler that forwards every record to logx's
+// shared configuration: the same sinks (console writer, rolling file), level,
+// pid field, and any fields registered via SetGlobalContext. It lets code that
+// logs through the standard library's log/slog API (including go-logr via
+// logr.FromSlogHandler) share logx's output.
 //
-// Typical use — make slog.Default() route through logx:
+// When IncludeCaller is enabled, the handler sets the caller from the slog
+// record's PC — the real call site — rather than from zerolog's caller hook,
+// which would otherwise resolve to this handler's own Msg call. For that reason
+// the handler writes through a caller-hook-free logger. Consequently SetLogger
+// (which replaces only the As() logger) does NOT affect this handler; use
+// Initialize and SetGlobalContext to configure it.
 //
-//	logx.Initialize(logx.LoggingConfig{
-//	  Level: "info", ConsoleLogging: true,
-//	  FileLogging: true, Directory: "/var/log/...", Filename: "daemon.log",
-//	  MaxSize: 50, MaxBackups: 3, MaxAge: 30, Compress: true,
+// Typical use — make slog.Default() route through logx, with persistent fields:
+//
+//	logx.Initialize(logx.LoggingConfig{Level: "info", ConsoleLogging: true, IncludeCaller: true})
+//	logx.SetGlobalContext(func(c zerolog.Context) zerolog.Context {
+//	    return c.Str("build_commit", commit)
 //	})
-//
 //	slog.SetDefault(slog.New(logx.NewSlogHandler()))
 //
-// The handler resolves As() on each Handle/Enabled call, so it always reflects
-// the current logx configuration even if Initialize or SetLogger is invoked
-// after the handler is created. This is the recommended choice for routing
-// slog.Default() through logx: resolving As() per record costs no extra
-// allocations (the copy does not escape Handle), so there is no performance
-// reason to pin. Use NewSlogHandlerFrom only when you want to route records to a
-// specific *zerolog.Logger instead.
+// The handler reads the current configuration on each call, so it reflects a
+// later Initialize or SetGlobalContext without rebuilding the handler, at no
+// extra allocation (the copy does not escape Handle). Use NewSlogHandlerFrom
+// only when you want to route records to a specific *zerolog.Logger instead.
 func NewSlogHandler() slog.Handler {
 	return &slogHandler{}
 }
 
 // NewSlogHandlerFrom returns a slog.Handler that forwards records to the given
-// zerolog logger rather than the package-global one. Pass nil to fall back to
-// As() (equivalent to NewSlogHandler).
+// zerolog logger rather than the shared one. Pass nil to fall back to the shared
+// slog logger (equivalent to NewSlogHandler).
 //
 // Use this when you want slog records to go to a specific logger — for example a
 // sub-logger carrying extra context or a separate sink:
@@ -46,7 +49,9 @@ func NewSlogHandler() slog.Handler {
 //
 // Note: the pinned logger is a snapshot. As() returns a shallow copy that shares
 // the underlying writer by pointer, so a handler built from one keeps writing to
-// that destination and will NOT pick up a later Initialize or SetLogger. When you
+// that destination and will NOT pick up a later Initialize or SetGlobalContext.
+// A pinned logger also keeps whatever caller behavior it was built with — the
+// PC-derived caller applies only to the shared handler (NewSlogHandler). When you
 // want the handler to follow logx reconfiguration, use NewSlogHandler instead.
 func NewSlogHandlerFrom(l *zerolog.Logger) slog.Handler {
 	return &slogHandler{logger: l}
@@ -54,7 +59,8 @@ func NewSlogHandlerFrom(l *zerolog.Logger) slog.Handler {
 
 // slogHandler adapts slog.Handler onto a zerolog logger.
 type slogHandler struct {
-	// logger, when non-nil, is the fixed target; nil means resolve As() per call.
+	// logger, when non-nil, is the fixed target; nil means use the shared
+	// caller-hook-free slog logger (slogBase) per call.
 	logger *zerolog.Logger
 	// prefix is the accumulated group path (e.g. "http.request.") applied to
 	// attribute keys, since zerolog has no native group concept.
@@ -69,12 +75,14 @@ type preAttr struct {
 	attr   slog.Attr
 }
 
-// zl resolves the target zerolog logger.
+// zl resolves the target zerolog logger. For the shared logger it returns the
+// caller-hook-free slog logger; Handle sets the caller from the record PC
+// instead, since the hook would resolve to Handle's own Msg call site.
 func (h *slogHandler) zl() *zerolog.Logger {
 	if h.logger != nil {
 		return h.logger
 	}
-	return As()
+	return slogBase()
 }
 
 // Enabled reports whether records at the given level would be emitted, gating on
@@ -101,6 +109,16 @@ func (h *slogHandler) Handle(_ context.Context, r slog.Record) error {
 	e := h.zl().WithLevel(zerologLevel(r.Level))
 	if e == nil {
 		return nil
+	}
+	// Attach the caller from the record PC that slog captured at the log call
+	// site. For the shared logger this is the only caller source (its logger has
+	// no caller hook). A pinned logger keeps whatever caller behavior it was
+	// built with, so skip it there to avoid a duplicate field.
+	if h.logger == nil && r.PC != 0 && callerEnabled() {
+		fs := runtime.CallersFrames([]uintptr{r.PC})
+		if f, _ := fs.Next(); f.File != "" {
+			e.Str(zerolog.CallerFieldName, zerolog.CallerMarshalFunc(f.PC, f.File, f.Line))
+		}
 	}
 	for _, p := range h.pre {
 		appendAttr(e, p.prefix, p.attr)

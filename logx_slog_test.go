@@ -175,3 +175,23 @@ func BenchmarkSlog_HandlerGlobal(b *testing.B) {
 		l.Info("hello", "reason", "bench", "count", 3)
 	}
 }
+
+// TestSlogHandler_CallerFromRecordPC verifies that logs routed through the shared
+// slog handler resolve the caller to the real call site (via slog's record PC),
+// not to the handler's own Msg call inside logx_slog.go.
+func TestSlogHandler_CallerFromRecordPC(t *testing.T) {
+	t.Cleanup(func() { _ = Initialize(LoggingConfig{ConsoleLogging: true}) })
+
+	out := captureStdout(t, func() {
+		// Initialize inside the capture so the sink binds to the redirected stdout.
+		require.NoError(t, Initialize(LoggingConfig{Level: "debug", ConsoleLogging: false, IncludeCaller: true}))
+		slog.New(NewSlogHandler()).Info("via slog") // caller should be this file
+	})
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &m))
+	caller, ok := m["caller"].(string)
+	require.True(t, ok, "expected a caller field, got %v", m)
+	assert.Contains(t, caller, "logx_slog_test.go:", "caller should point to the call site, got %q", caller)
+	assert.NotContains(t, caller, "logx_slog.go", "caller must not point to the handler, got %q", caller)
+}
