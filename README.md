@@ -12,7 +12,7 @@ By default, it includes process ID (e.g. pid) in the logs, which can be useful f
 - Log levels: All levels that zerolog supports (i.e. Debug, Info, Warn, Error, Fatal, Panic, Trace)
 - Log file rotation via lumberjack
 - Includes process ID in logs for easier debugging
-- Optional UTC timestamps and truncated source caller (`IncludeCaller`)
+- Optional UTC timestamps, truncated source caller (`IncludeCaller`, length via `CallerFieldLength`), and full package path (`IncludePackage`)
 - Console (human-readable) or structured JSON output (`ConsoleLogging`)
 - Persistent global fields via `SetGlobalContext`
 - Bridges the standard library `log/slog` (and `go-logr`) into the same output
@@ -45,8 +45,10 @@ func main() {
 		MaxAge:         30,
 		Compress:       true,
 		TimeFormat:     "2006-01-02T15:04:05.000Z07:00", // millisecond precision; defaults to time.RFC3339
-		UTC:            true,                            // pin timestamps to UTC (default: local time)
-		IncludeCaller:  true,                            // annotate lines with source location, e.g. pkg/sub/file.go:42
+		UTC:               true,                         // pin timestamps to UTC (default: local time)
+		IncludeCaller:     true,                         // "caller" field, e.g. pkg/sub/file.go:42
+		CallerFieldLength: 0,                            // trailing segments in "caller" (0 = default 3; 1 = file name only)
+		IncludePackage:    true,                         // "package" field: full import path, e.g. github.com/org/repo/pkg
 	})
 
 	if err != nil {
@@ -59,11 +61,11 @@ func main() {
 	logx.As().Error().Err(fmt.Errorf("test error")).Msg("An error occurred")
 }
 
-# Output (with UTC: true and IncludeCaller: true)
-2025-06-27T03:08:40.123Z INF myapp/main.go:52 > Application started pid=35333
-2025-06-27T03:08:40.124Z DBG myapp/main.go:53 > Debugging details pid=35333 userID=123
-2025-06-27T03:08:40.124Z WRN myapp/main.go:54 > This is a warning pid=35333
-2025-06-27T03:08:40.125Z ERR myapp/main.go:55 > An error occurred error="test error" pid=35333
+# Output (with UTC, IncludeCaller, and IncludePackage)
+2025-06-27T03:08:40.123Z INF acme/myapp/main.go:52 > Application started package=github.com/acme/myapp pid=35333
+2025-06-27T03:08:40.124Z DBG acme/myapp/main.go:53 > Debugging details package=github.com/acme/myapp pid=35333 userID=123
+2025-06-27T03:08:40.124Z WRN acme/myapp/main.go:54 > This is a warning package=github.com/acme/myapp pid=35333
+2025-06-27T03:08:40.125Z ERR acme/myapp/main.go:55 > An error occurred package=github.com/acme/myapp error="test error" pid=35333
 
 ```
 

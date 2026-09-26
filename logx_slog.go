@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"strconv"
 
 	"github.com/rs/zerolog"
 )
@@ -110,14 +111,20 @@ func (h *slogHandler) Handle(_ context.Context, r slog.Record) error {
 	if e == nil {
 		return nil
 	}
-	// Attach the caller from the record PC that slog captured at the log call
-	// site. For the shared logger this is the only caller source (its logger has
-	// no caller hook). A pinned logger keeps whatever caller behavior it was
-	// built with, so skip it there to avoid a duplicate field.
-	if h.logger == nil && r.PC != 0 && callerEnabled() {
-		fs := runtime.CallersFrames([]uintptr{r.PC})
-		if f, _ := fs.Next(); f.File != "" {
-			e.Str(zerolog.CallerFieldName, zerolog.CallerMarshalFunc(f.PC, f.File, f.Line))
+	// Attach caller/package from the record PC that slog captured at the log call
+	// site. For the shared logger this is the only source (its logger has no
+	// caller hook). A pinned logger keeps its own caller behavior, so skip it.
+	if h.logger == nil && r.PC != 0 {
+		if caller, pkg, segs := callerConfig(); caller || pkg {
+			fs := runtime.CallersFrames([]uintptr{r.PC})
+			if f, _ := fs.Next(); f.File != "" {
+				if caller {
+					e.Str(zerolog.CallerFieldName, trimFile(f.File, segs)+":"+strconv.Itoa(f.Line))
+				}
+				if pkg {
+					e.Str(packageFieldName, resolvePkg(f.Function))
+				}
+			}
 		}
 	}
 	for _, p := range h.pre {
