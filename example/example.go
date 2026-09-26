@@ -19,7 +19,8 @@ func main() {
 		MaxAge:         30,
 		Compress:       true,
 		UTC:            true, // pin timestamps to UTC
-		IncludeCaller:  true, // annotate lines with source location
+		IncludeCaller:  true, // "caller" field: file.go:line
+		IncludePackage: true, // "package" field: full import path
 	})
 	if err != nil {
 		panic(err)

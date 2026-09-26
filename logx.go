@@ -4,7 +4,10 @@ import (
 	"io"
 	"os"
 	"path"
+	"runtime"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,10 +16,13 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// defaultCallerMarshalFunc captures zerolog's built-in caller marshaler so it
-// can be restored when IncludeCaller is disabled, avoiding leaking shortCaller
-// into the process-global state (and other zerolog loggers).
-var defaultCallerMarshalFunc = zerolog.CallerMarshalFunc
+// packageFieldName is the log field carrying the caller's Go import path.
+const packageFieldName = "package"
+
+// defaultCallerSegments is how many trailing path segments the caller field keeps
+// when CallerFieldLength is 0 (e.g. "pkg/sub/file.go:42"). Three disambiguates
+// files with the same name in different packages.
+const defaultCallerSegments = 3
 
 var (
 	logger    zerolog.Logger
@@ -25,8 +31,8 @@ var (
 	pid       = os.Getpid()
 
 	// slogLogger mirrors logger but never carries the caller hook. The slog
-	// bridge (NewSlogHandler) uses it and derives the caller from the record's
-	// PC instead, because the shared hook would resolve every slog line to the
+	// bridge (NewSlogHandler) uses it and derives caller/package from the
+	// record's PC instead, because a hook would resolve every slog line to the
 	// handler's own Msg call site rather than the real caller.
 	slogLogger zerolog.Logger
 	// baseWriter is retained so both loggers can be rebuilt when the global
@@ -34,9 +40,11 @@ var (
 	baseWriter io.Writer
 	// globalCtx applies persistent fields to both loggers (e.g. build metadata).
 	globalCtx func(zerolog.Context) zerolog.Context
-	// includeCaller records whether IncludeCaller was set, so the slog bridge
-	// knows to attach a PC-derived caller.
-	includeCaller bool
+	// includeCaller/includePackage/callerSegments mirror the config so the direct
+	// logger's hook and the slog bridge can attach caller and package fields.
+	includeCaller  bool
+	includePackage bool
+	callerSegments int
 )
 
 // LoggingConfig holds the configuration for logging.
@@ -63,9 +71,19 @@ type LoggingConfig struct {
 	TimeFormat string
 	// UTC pins log timestamps to UTC. When false, timestamps use local time.
 	UTC bool
-	// IncludeCaller annotates each log line with the source file and line
-	// (truncated to the last few path segments, e.g. "pkg/sub/file.go:42").
+	// IncludeCaller annotates each log line with a "caller" field: the source
+	// file and line, truncated to the last CallerFieldLength path segments
+	// (e.g. "pkg/sub/file.go:42").
 	IncludeCaller bool
+	// IncludePackage annotates each log line with a "package" field: the caller's
+	// full Go import path (e.g. "github.com/org/repo/internal/controller"). It is
+	// independent of IncludeCaller and useful for filtering logs by origin.
+	IncludePackage bool
+	// CallerFieldLength is how many trailing path segments the "caller" field
+	// keeps. 0 uses the default of 3 (e.g. "pkg/sub/file.go:42"); 1 is the lowest
+	// explicit value and keeps just the file name. Ignored unless IncludeCaller
+	// is set.
+	CallerFieldLength int
 }
 
 func init() {
@@ -105,12 +123,6 @@ func initializeLogger(cfg *LoggingConfig) error {
 		zerolog.TimestampFunc = time.Now
 	}
 
-	if cfg.IncludeCaller {
-		zerolog.CallerMarshalFunc = shortCaller
-	} else {
-		zerolog.CallerMarshalFunc = defaultCallerMarshalFunc
-	}
-
 	// The console sink honors ConsoleLogging: human-readable when true, raw
 	// structured JSON when false. The file sink is always JSON.
 	var consoleSink io.Writer
@@ -144,15 +156,17 @@ func initializeLogger(cfg *LoggingConfig) error {
 
 	baseWriter = zerolog.MultiLevelWriter(writers...)
 	includeCaller = cfg.IncludeCaller
+	includePackage = cfg.IncludePackage
+	callerSegments = cfg.CallerFieldLength
 	rebuildLoggersLocked()
 
 	return nil
 }
 
 // rebuildLoggersLocked (re)builds both the direct logger and the slog logger
-// from baseWriter, applying globalCtx to each. The direct logger carries the
-// caller hook when includeCaller is set; the slog logger never does (the slog
-// bridge sets caller from the record PC). Callers must hold loggerMux.
+// from baseWriter, applying globalCtx to each. The direct logger carries logx's
+// caller hook when caller/package fields are enabled; the slog logger never does
+// (the slog bridge derives them from the record PC). Callers must hold loggerMux.
 func rebuildLoggersLocked() {
 	base := zerolog.New(baseWriter).With().
 		Timestamp().
@@ -161,11 +175,11 @@ func rebuildLoggersLocked() {
 		base = globalCtx(base)
 	}
 	slogLogger = base.Logger()
-	direct := base
-	if includeCaller {
-		direct = base.Caller()
+	direct := base.Logger()
+	if includeCaller || includePackage {
+		direct = direct.Hook(callerHook{caller: includeCaller, pkg: includePackage, segs: callerSegments})
 	}
-	logger = direct.Logger()
+	logger = direct
 }
 
 // SetGlobalContext registers fields applied to every log line on BOTH the direct
@@ -180,11 +194,12 @@ func SetGlobalContext(apply func(zerolog.Context) zerolog.Context) {
 	rebuildLoggersLocked()
 }
 
-// callerEnabled reports whether IncludeCaller is active, under the read lock.
-func callerEnabled() bool {
+// callerConfig returns the caller/package field settings under the read lock,
+// for the slog bridge (which sets these fields from the record PC).
+func callerConfig() (caller, pkg bool, segs int) {
 	loggerMux.RLock()
 	defer loggerMux.RUnlock()
-	return includeCaller
+	return includeCaller, includePackage, callerSegments
 }
 
 // slogBase returns a copy of the caller-hook-free slog logger.
@@ -195,25 +210,108 @@ func slogBase() *zerolog.Logger {
 	return &c
 }
 
-// shortCaller renders a caller as the last few path segments plus the line
-// number (e.g. "pkg/sub/file.go:42"), so log lines can be traced to source
-// without emitting full absolute paths.
-func shortCaller(_ uintptr, file string, line int) string {
-	const maxSegments = 3
+// callerHook attaches the caller and/or package field to each direct-logger
+// event, resolved from the real call site (see callerFrame).
+type callerHook struct {
+	caller bool
+	pkg    bool
+	segs   int
+}
 
-	short := file
+func (h callerHook) Run(e *zerolog.Event, _ zerolog.Level, _ string) {
+	f := callerFrame()
+	if f.File == "" {
+		return
+	}
+	if h.caller {
+		e.Str(zerolog.CallerFieldName, trimFile(f.File, h.segs)+":"+strconv.Itoa(f.Line))
+	}
+	if h.pkg {
+		e.Str(packageFieldName, resolvePkg(f.Function))
+	}
+}
+
+// callerFrame returns the first stack frame outside runtime, zerolog, and logx —
+// i.e. the code that invoked the logger. Walking by package prefix (rather than a
+// fixed skip count) keeps it correct regardless of zerolog's internal call depth.
+func callerFrame() runtime.Frame {
+	var pcs [32]uintptr
+	n := runtime.Callers(0, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		f, more := frames.Next()
+		if f.Function != "" && !isInternalFrame(f.Function) {
+			return f
+		}
+		if !more {
+			return runtime.Frame{}
+		}
+	}
+}
+
+// isInternalFrame reports whether fn belongs to the runtime, zerolog, or logx
+// itself. The "." / "/" boundaries matter: they exclude these packages and their
+// subpackages without also matching a consumer package that merely shares the
+// prefix (e.g. the external logx_test package or a "logxfoo" module).
+func isInternalFrame(fn string) bool {
+	for _, p := range []string{"runtime", "github.com/rs/zerolog", "github.com/automa-saga/logx"} {
+		if fn == p || strings.HasPrefix(fn, p+".") || strings.HasPrefix(fn, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// trimFile keeps the last n '/'-separated segments of file (n<=0 uses the
+// default), so log lines trace to source without full absolute paths.
+func trimFile(file string, n int) string {
+	if n <= 0 {
+		n = defaultCallerSegments
+	}
 	segments := 0
 	for i := len(file) - 1; i >= 0; i-- {
 		if file[i] == '/' {
 			segments++
-			if segments == maxSegments {
-				short = file[i+1:]
-				break
+			if segments == n {
+				return file[i+1:]
 			}
 		}
 	}
+	return file
+}
 
-	return short + ":" + strconv.Itoa(line)
+// mainPkg is the import path of the binary's main package, resolved once from
+// build info. The Go runtime names main-package functions "main.<func>" with no
+// import path, so resolvePkg substitutes this. Empty when unavailable (e.g.
+// `go run <file.go>`, which builds as "command-line-arguments").
+var mainPkg = func() string {
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Path != "" && bi.Path != "command-line-arguments" {
+		return bi.Path
+	}
+	return ""
+}()
+
+// resolvePkg returns pkgOf(fn), substituting the real main package path for the
+// runtime's bare "main" when it is known.
+func resolvePkg(fn string) string {
+	if p := pkgOf(fn); p != "main" || mainPkg == "" {
+		return p
+	}
+	return mainPkg
+}
+
+// pkgOf extracts the Go import path from a runtime function name, e.g.
+// "github.com/org/repo/pkg.(*T).Method" → "github.com/org/repo/pkg".
+func pkgOf(fn string) string {
+	if fn == "" {
+		return ""
+	}
+	slash := strings.LastIndexByte(fn, '/')
+	dot := strings.IndexByte(fn[slash+1:], '.')
+	if dot < 0 {
+		return fn
+	}
+	return fn[:slash+1+dot]
 }
 
 // As returns a pointer to a shallow copy of the global logger.

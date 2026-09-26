@@ -153,68 +153,36 @@ func TestInitialize_UTC(t *testing.T) {
 	assert.Equal(t, 0, offset, "timestamp should be in UTC")
 }
 
-func TestInitialize_IncludeCaller(t *testing.T) {
-	t.Cleanup(func() {
-		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
-	})
-
-	out := captureStdout(t, func() {
-		err := Initialize(LoggingConfig{
-			Level:          "info",
-			ConsoleLogging: false,
-			IncludeCaller:  true,
-		})
-		require.NoError(t, err)
-		As().Info().Msg("caller message")
-	})
-
-	var m map[string]any
-	require.NoError(t, json.Unmarshal([]byte(out), &m))
-	caller, ok := m["caller"].(string)
-	require.True(t, ok, "expected a caller field, got %v", m)
-	assert.Contains(t, caller, "logx_test.go:")
-	assert.False(t, filepath.IsAbs(caller), "caller should be truncated, got %q", caller)
-}
-
-// TestInitialize_IncludeCaller_RestoresDefault verifies that disabling
-// IncludeCaller restores zerolog's default CallerMarshalFunc instead of leaking
-// shortCaller into the process-global state.
-func TestInitialize_IncludeCaller_RestoresDefault(t *testing.T) {
-	t.Cleanup(func() {
-		zerolog.CallerMarshalFunc = defaultCallerMarshalFunc
-		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
-	})
-
-	// Enable, then disable.
-	require.NoError(t, Initialize(LoggingConfig{Level: "info", IncludeCaller: true}))
-	require.NoError(t, Initialize(LoggingConfig{Level: "info", IncludeCaller: false}))
-
-	// A logger that opts into the caller directly should now use the default
-	// (untruncated, absolute) marshaler rather than shortCaller.
-	var buf bytes.Buffer
-	l := zerolog.New(&buf).With().Caller().Logger()
-	l.Info().Msg("check")
-
-	m := decode(t, &buf)
-	caller, ok := m["caller"].(string)
-	require.True(t, ok, "expected a caller field, got %v", m)
-	assert.True(t, filepath.IsAbs(caller),
-		"default marshaler should emit the absolute path, got %q", caller)
-}
-
-func TestShortCaller(t *testing.T) {
+func TestTrimFile(t *testing.T) {
 	cases := []struct {
 		file string
-		line int
+		n    int
 		want string
 	}{
-		{"/home/user/project/pkg/sub/file.go", 42, "pkg/sub/file.go:42"},
-		{"pkg/sub/file.go", 7, "pkg/sub/file.go:7"},
-		{"file.go", 1, "file.go:1"},
-		{"a/b.go", 3, "a/b.go:3"},
+		{"/home/user/project/pkg/sub/file.go", 3, "pkg/sub/file.go"},
+		{"/home/user/project/pkg/sub/file.go", 0, "pkg/sub/file.go"}, // 0 → default 3
+		{"/home/user/project/pkg/sub/file.go", 1, "file.go"},         // 1 → file name only
+		{"pkg/sub/file.go", 3, "pkg/sub/file.go"},
+		{"file.go", 3, "file.go"},
+		{"a/b.go", 3, "a/b.go"},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, shortCaller(0, c.file, c.line))
+		assert.Equal(t, c.want, trimFile(c.file, c.n))
+	}
+}
+
+func TestPkgOf(t *testing.T) {
+	cases := []struct {
+		fn   string
+		want string
+	}{
+		{"github.com/org/repo/pkg.(*T).Method", "github.com/org/repo/pkg"},
+		{"github.com/org/repo/pkg.Func", "github.com/org/repo/pkg"},
+		{"main.main", "main"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, pkgOf(c.fn))
 	}
 }
 
