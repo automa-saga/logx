@@ -210,6 +210,23 @@ func slogBase() *zerolog.Logger {
 	return &c
 }
 
+// CallerHook returns a hook that adds the caller and package fields as
+// configured by the last Initialize (IncludeCaller, IncludePackage,
+// CallerFieldLength). Attach it to a logger built outside logx before passing
+// that logger to SetLogger, so its lines carry the same fields as As():
+//
+//	logx.SetLogger(zerolog.New(w).With().Timestamp().Logger().Hook(logx.CallerHook()))
+//
+// The settings are read once, when CallerHook is called. It returns a no-op
+// hook when both fields are off.
+func CallerHook() zerolog.Hook {
+	caller, pkg, segs := callerConfig()
+	if !caller && !pkg {
+		return zerolog.HookFunc(func(*zerolog.Event, zerolog.Level, string) {})
+	}
+	return callerHook{caller: caller, pkg: pkg, segs: segs}
+}
+
 // callerHook attaches the caller and/or package field to each direct-logger
 // event, resolved from the real call site (see callerFrame).
 type callerHook struct {

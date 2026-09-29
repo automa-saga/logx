@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/automa-saga/logx"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -103,4 +104,35 @@ func TestSlog_CallerAndPackage_External(t *testing.T) {
 	pkg, _ := m["package"].(string)
 	assert.Contains(t, caller, "logx_caller_ext_test.go:")
 	assert.Equal(t, "github.com/automa-saga/logx_test", pkg)
+}
+
+// captureCustom logs one line through a logger built outside logx with
+// CallerHook attached, the way a consumer that swaps in its own writer does.
+func captureCustom(t *testing.T, cfg logx.LoggingConfig) map[string]any {
+	t.Helper()
+	t.Cleanup(func() { _ = logx.Initialize(logx.LoggingConfig{ConsoleLogging: true}) })
+	require.NoError(t, logx.Initialize(cfg))
+
+	var buf strings.Builder
+	l := zerolog.New(&buf).Hook(logx.CallerHook())
+	l.Info().Msg("custom")
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(buf.String()), &m), "line=%q", buf.String())
+	return m
+}
+
+func TestCallerHook_CustomLoggerGetsConfiguredFields(t *testing.T) {
+	m := captureCustom(t, logx.LoggingConfig{
+		Level: "info", IncludeCaller: true, IncludePackage: true, CallerFieldLength: 1,
+	})
+	caller, _ := m["caller"].(string)
+	assert.True(t, strings.HasPrefix(caller, "logx_caller_ext_test.go:"), "got %q", caller)
+	assert.Equal(t, "github.com/automa-saga/logx_test", m["package"])
+}
+
+func TestCallerHook_NoFieldsWhenOff(t *testing.T) {
+	m := captureCustom(t, logx.LoggingConfig{Level: "info"})
+	assert.NotContains(t, m, "caller")
+	assert.NotContains(t, m, "package")
 }

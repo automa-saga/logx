@@ -85,6 +85,18 @@ Prefer this over `logx.SetLogger(logx.As().With()....Logger())`: that snapshots
 one logger instance, is dropped by a later `Initialize`, and is not shared with
 the slog bridge.
 
+## Custom loggers
+
+A logger you build yourself and install with `SetLogger` (for example, one that
+writes to stderr instead of stdout) does not get logx's `caller` and `package`
+fields. Attach `CallerHook` to add them, following the settings from the last
+`Initialize`:
+
+```go
+l := zerolog.New(os.Stderr).With().Timestamp().Logger().Hook(logx.CallerHook())
+logx.SetLogger(l)
+```
+
 ## Bridging log/slog and go-logr
 
 `NewSlogHandler` routes `log/slog` (and, via `logr.FromSlogHandler`, `go-logr`
