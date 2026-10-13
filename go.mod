@@ -1,6 +1,6 @@
 module github.com/automa-saga/logx
 
-go 1.26.5
+go 1.26.9
 
 require (
 	github.com/rs/zerolog v1.35.1
