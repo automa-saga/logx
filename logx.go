@@ -148,8 +148,10 @@ func initializeLogger(cfg *LoggingConfig) error {
 			return err
 		}
 
-		fileWriter := zerolog.New(logFile).With().Timestamp().Logger()
-		writers = append(writers, consoleSink, fileWriter)
+		// Pass the file straight through. A zerolog.Logger used as an io.Writer logs
+		// the bytes it receives as the message of a new event, which would wrap every
+		// line in a second JSON object.
+		writers = append(writers, consoleSink, logFile)
 	} else {
 		writers = append(writers, consoleSink)
 	}

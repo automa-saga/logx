@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,6 +39,48 @@ func TestInitialize_FileLogging(t *testing.T) {
 	logFilePath := filepath.Join(tempDir, logFile)
 	_, err = os.Stat(logFilePath)
 	assert.NoError(t, err)
+}
+
+// TestInitialize_FileLogging_NotDoubleEncoded pins that the file holds the same
+// JSON entry the logger produced, not that entry logged again as the message of
+// an outer one.
+func TestInitialize_FileLogging_NotDoubleEncoded(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := "test.log"
+	t.Cleanup(func() {
+		_ = Initialize(LoggingConfig{Level: "info", ConsoleLogging: true})
+	})
+
+	require.NoError(t, Initialize(LoggingConfig{
+		Level:          "debug",
+		FileLogging:    true,
+		ConsoleLogging: true,
+		Directory:      tempDir,
+		Filename:       logFile,
+		MaxSize:        1,
+		MaxBackups:     1,
+		MaxAge:         1,
+	}))
+
+	As().Info().Str("reason", "R").Msg("direct message")
+	slog.New(NewSlogHandler()).Warn("slog message", "k", "v")
+
+	content, err := os.ReadFile(filepath.Join(tempDir, logFile))
+	require.NoError(t, err)
+
+	lines := bytes.Split(bytes.TrimSpace(content), []byte("\n"))
+	require.Len(t, lines, 2)
+
+	direct := decode(t, bytes.NewBuffer(lines[0]))
+	assert.Equal(t, "info", direct["level"])
+	assert.Equal(t, "direct message", direct["message"])
+	assert.Equal(t, "R", direct["reason"])
+	assert.NotNil(t, direct["pid"])
+
+	bridged := decode(t, bytes.NewBuffer(lines[1]))
+	assert.Equal(t, "warn", bridged["level"])
+	assert.Equal(t, "slog message", bridged["message"])
+	assert.Equal(t, "v", bridged["k"])
 }
 
 func TestInitialize_TimeFormat(t *testing.T) {
